@@ -10,7 +10,7 @@ from telegram.ext import (
 nest_asyncio.apply()
 
 TOKEN = "8172311063:AAEzTaO163ClmTtCrjh-wDplMrPi3kaHfcg"
-GROUP_ID = -1002333766560
+GROUP_ID = -1002619230970
 CACHE_FILE = "message_cache.txt"
 RESULTS_PER_PAGE = 10
 ADMIN_IDS = [6192971829]  # Replace with your admin user ID
