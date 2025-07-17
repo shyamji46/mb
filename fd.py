@@ -90,6 +90,8 @@ Admin Commands:
 /message_catch - Get the message cache file
 /chat_id - Get the user IDs file
 /message - Broadcast message to all users
+/upload_caches - Upload new cache file (replace existing)
+/upload_ids - Upload new user IDs file (replace existing)
 /help - Show this help message
 """
     await update.message.reply_text(help_text)
@@ -125,10 +127,65 @@ async def chat_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=f,
-                filename="user_ids.txt"
+                filename="id.txt"
             )
     except Exception as e:
         await update.message.reply_text(f"Error: {str(e)}")
+
+async def upload_caches(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    await update.message.reply_text(
+        "Please upload the new cache file (must be named 'message_cache.txt'). I will replace the existing one.\n\n"
+        "Only document files will be accepted. Any other message type will be rejected."
+    )
+    context.user_data['waiting_for_cache_upload'] = True
+
+async def upload_ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    await update.message.reply_text(
+        "Please upload the new user IDs file (must be named 'id.txt'). I will replace the existing one.\n\n"
+        "Only document files will be accepted. Any other message type will be rejected."
+    )
+    context.user_data['waiting_for_ids_upload'] = True
+
+async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    if not update.message.document:
+        if context.user_data.get('waiting_for_cache_upload', False) or context.user_data.get('waiting_for_ids_upload', False):
+            await update.message.reply_text("❌ Please upload a file document. Text messages, photos or other media are not accepted for this operation.")
+            return
+
+    if context.user_data.get('waiting_for_cache_upload', False):
+        if update.message.document.file_name != "message_cache.txt":
+            await update.message.reply_text("❌ Invalid filename! File must be named 'message_cache.txt'")
+            context.user_data['waiting_for_cache_upload'] = False
+            return
+            
+        file = await context.bot.get_file(update.message.document)
+        await file.download_to_drive(CACHE_FILE)
+        await update.message.reply_text("✅ Cache file has been successfully updated!")
+        context.user_data['waiting_for_cache_upload'] = False
+        return
+
+    if context.user_data.get('waiting_for_ids_upload', False):
+        if update.message.document.file_name != "id.txt":
+            await update.message.reply_text("❌ Invalid filename! File must be named 'id.txt'")
+            context.user_data['waiting_for_ids_upload'] = False
+            return
+            
+        file = await context.bot.get_file(update.message.document)
+        await file.download_to_drive(USER_IDS_FILE)
+        await update.message.reply_text("✅ User IDs file has been successfully updated!")
+        context.user_data['waiting_for_ids_upload'] = False
+        return
 
 async def message_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
@@ -136,7 +193,8 @@ async def message_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(
-        "I am ready for sending broadcast message, please send me anything (text, photo, or video) and I will send it to all users."
+        "I am ready for sending broadcast message, please send me anything (text, photo, or video) and I will send it to all users.\n\n"
+        "After sending this message, you'll need to use /message command again to send another broadcast."
     )
     
     context.user_data['waiting_for_broadcast'] = True
@@ -179,9 +237,11 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Broadcast sent successfully!\n"
                 f"Message sent to {successful} users.\n"
                 f"Blocked users: {blocked}\n"
-                f"Total users: {total_users}"
+                f"Total users: {total_users}\n\n"
+                f"To send another broadcast, use /message command again."
             )
             
+            # Clear the waiting flag so admin needs to use /message again
             context.user_data['waiting_for_broadcast'] = False
         else:
             await update.message.reply_text("You are not authorized to send this message.")
@@ -201,6 +261,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if context.user_data.get('waiting_for_broadcast', False):
         await handle_broadcast(update, context)
+        return
+    
+    if context.user_data.get('waiting_for_cache_upload', False) or context.user_data.get('waiting_for_ids_upload', False):
+        await handle_file_upload(update, context)
         return
     
     user_message = update.message.text.strip()
@@ -357,6 +421,8 @@ async def main():
     app.add_handler(CommandHandler("message_catch", message_catch))
     app.add_handler(CommandHandler("chat_id", chat_id_command))
     app.add_handler(CommandHandler("message", message_command))
+    app.add_handler(CommandHandler("upload_caches", upload_caches))
+    app.add_handler(CommandHandler("upload_ids", upload_ids))
     app.add_handler(MessageHandler(
         (filters.CAPTION | filters.TEXT) & filters.ChatType.GROUPS, 
         cache_group_messages
@@ -364,6 +430,7 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VIDEO & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, handle_file_upload))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     print("🤖 Bot is running...")
